@@ -2,7 +2,7 @@ import networkx as nx
 from graphviz import Digraph
 import unittest
 from unittest.mock import Mock
-from agents.stategraph import StateGraph, START, END
+from sololgraph import StateGraph, START, END
 
 class TestStateGraph(unittest.TestCase):
 

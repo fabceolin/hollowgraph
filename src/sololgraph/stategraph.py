@@ -1,3 +1,4 @@
+import inspect
 import networkx as nx
 from graphviz import Digraph
 from typing import Any, Callable, Dict, List, Optional, Union, Generator
@@ -207,85 +208,61 @@ class StateGraph:
             else:
                 yield result
 
-    def invoke(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, AddableDict]:
-        """
-        Execute the graph based on the input state and configuration.
-
-        Args:
-            input_state (Dict[str, Any]): The initial state.
-            config (Dict[str, Any]): Configuration for the execution.
-
-        Yields:
-            Dict[str, Any]: Intermediate states, interrupts, and the final state.
-
-        Returns:
-            AddableDict: The final state of the execution.
-        """
+    def invoke(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Dict[str, Any]:
         current_state = {"values": input_state, "next": START}
-        all_states: List[Dict[str, Any]] = []
 
         while current_state["next"] != END:
             current_node = current_state["next"]
-
-            if current_node in self.interrupt_before:
-                yield {"type": "interrupt", "state": current_state.copy(), "node": current_node}
-
             node_data = self.node(current_node)
+
             if "run" in node_data and node_data["run"]:
                 node_function = node_data["run"]
-                function_params = self._prepare_function_params(node_function, current_state["values"], config)
+                available_params = {
+                    "state": current_state["values"],
+                    "config": config,
+                    "node": current_node,
+                    "graph": self
+                }
+                function_params = self._prepare_function_params(node_function, available_params)
+                result = node_function(**function_params)
 
-                llm_response = node_function(**function_params)
-
-                if isinstance(llm_response, dict):
-                    current_state["values"].update(llm_response)
+                if isinstance(result, dict):
+                    current_state["values"].update(result)
                 else:
-                    current_state["values"]["llm_response"] = llm_response
+                    current_state["values"]["result"] = result
 
             next_node = self._get_next_node(current_node, current_state["values"], config)
             current_state["next"] = next_node
 
-            if current_node in self.interrupt_after:
-                yield {"type": "interrupt", "state": current_state.copy(), "node": current_node}
+        return current_state["values"]
 
-            if current_node not in self.interrupt_before and current_node not in self.interrupt_after:
-                all_states.append(current_state.copy())
-
-        # Add the final state
-        all_states.append(current_state)
-
-        # Combine all states into a single AddableDict
-        final_state = AddableDict()
-        for state in all_states:
-            final_state.update(state["values"])
-
-        # Include the final 'next' value
-        final_state["next"] = END
-
-        yield {"type": "final", "state": final_state}
-
-    def _prepare_function_params(self, func: Callable, state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Prepare the parameters for a node function based on its signature.
-
-        Args:
-            func (Callable): The function to prepare parameters for.
-            state (Dict[str, Any]): The current state.
-            config (Dict[str, Any]): The configuration.
-
-        Returns:
-            Dict[str, Any]: The prepared parameters for the function.
-        """
-        function_params = {}
-        func_params = func.__code__.co_varnames[:func.__code__.co_argcount]
-
-        if 'state' in func_params:
-            function_params['state'] = state
-
-        if 'config' in func_params:
-            function_params['config'] = config
-
-        return function_params
+    def _prepare_function_params(
+            self, 
+            func: Callable, 
+            available_params: Dict[str, Any]
+        ) -> Dict[str, Any]:
+            """
+            Prepare the parameters for a node function based on its signature.
+    
+            Args:
+                func (Callable): The function to prepare parameters for.
+                available_params (Dict[str, Any]): Dictionary of available parameters.
+    
+            Returns:
+                Dict[str, Any]: The prepared parameters for the function.
+            """
+            sig = inspect.signature(func)
+            function_params = {}
+    
+            for param_name, param in sig.parameters.items():
+                if param_name in available_params:
+                    function_params[param_name] = available_params[param_name]
+                elif param.default is not inspect.Parameter.empty:
+                    function_params[param_name] = param.default
+                else:
+                    raise ValueError(f"Required parameter '{param_name}' not provided for function '{func.__name__}'")
+    
+            return function_params
 
     def _get_next_node(self, current_node: str, state: Dict[str, Any], config: Dict[str, Any]) -> str:
         """
@@ -306,7 +283,9 @@ class StateGraph:
             edge_data = self.edge(current_node, successor)
             if "cond" in edge_data:
                 cond_func = edge_data["cond"]
-                if cond_func(state):
+                available_params = {"state": state, "config": config}
+                cond_params = self._prepare_function_params(cond_func, available_params)
+                if cond_func(**cond_params):
                     return successor
 
         raise RuntimeError(f"No valid next node found for '{current_node}'")
