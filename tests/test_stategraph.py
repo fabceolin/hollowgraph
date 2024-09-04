@@ -247,13 +247,28 @@ class TestStateGraph(unittest.TestCase):
     def test_error_handling_in_node_function(self):
         def error_func(state):
             raise ValueError("Test error")
-
-        self.graph.add_node("error_node", run=error_func)
-        self.graph.set_entry_point("error_node")
-        self.graph.set_finish_point("error_node")
-
-        with self.assertRaises(ValueError):
-            list(self.graph.invoke({}))
+    
+        # Create a new graph with raise_exceptions=True
+        error_graph = StateGraph(state_schema={}, raise_exceptions=True)
+        error_graph.add_node("error_node", run=error_func)
+        error_graph.set_entry_point("error_node")
+        error_graph.set_finish_point("error_node")
+    
+        with self.assertRaises(RuntimeError) as context:
+            list(error_graph.invoke({}))
+    
+        self.assertIn("Test error", str(context.exception))
+    
+        # Test the default behavior (not raising exceptions)
+        normal_graph = StateGraph(state_schema={})
+        normal_graph.add_node("error_node", run=error_func)
+        normal_graph.set_entry_point("error_node")
+        normal_graph.set_finish_point("error_node")
+    
+        results = list(normal_graph.invoke({}))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["type"], "error")
+        self.assertIn("Test error", results[0]["error"])
 
     @patch('sololgraph.StateGraph._get_next_node')
     def test_no_valid_next_node(self, mock_get_next_node):
@@ -343,23 +358,41 @@ class TestStateGraph(unittest.TestCase):
         self.assertIn(result1[-1]["state"]["value"], [6, 10])
         self.assertIn(result2[-1]["state"]["value"], [6, 10])
 
-    def test_dynamic_node_addition(self):
-        self.graph.add_node("start", run=lambda state: state)
-        self.graph.set_entry_point("start")
-
-        def dynamic_add(state, graph):
-            if "dynamic" not in graph.graph.nodes:
-                graph.add_node("dynamic", run=lambda s: {"value": s["value"] * 2})
-                graph.add_edge("start", "dynamic")
-                graph.set_finish_point("dynamic")
+    def test_dynamic_node_addition_during_execution(self):
+        def start_node(state):
+            state['path'] = ['start']
             return state
 
-        self.graph.add_node("add_dynamic", run=dynamic_add)
-        self.graph.add_edge("start", "add_dynamic")
+        def dynamic_add_node(state, graph):
+            if 'dynamic1' not in graph.graph.nodes:
+                graph.add_node('dynamic1', run=lambda state: {**state, 'value': state['value'] * 2, 'path': state['path'] + ['dynamic1']})
+                graph.add_edge('dynamic_adder', 'dynamic1')
+            
+            if 'dynamic2' not in graph.graph.nodes:
+                graph.add_node('dynamic2', run=lambda state: {**state, 'value': state['value'] + 5, 'path': state['path'] + ['dynamic2']})
+                graph.add_edge('dynamic1', 'dynamic2')
+            
+            graph.set_finish_point('dynamic2')
+            return state
 
-        result = list(self.graph.invoke({"value": 5}))
-        self.assertEqual(result[-1]["state"]["value"], 10)
-        self.assertIn("dynamic", self.graph.graph.nodes)
+        self.graph.add_node('start', run=start_node)
+        self.graph.add_node('dynamic_adder', run=dynamic_add_node)
+        self.graph.add_edge('start', 'dynamic_adder')
+        self.graph.set_entry_point('start')
+
+        result = list(self.graph.invoke({"value": 5, "path": []}))
+        final_state = result[-1]['state']
+
+        # Print debug information
+        print("Result:", result)
+        print("Final state:", final_state)
+        print("Graph nodes:", self.graph.graph.nodes)
+        print("Graph edges:", self.graph.graph.edges)
+
+        self.assertEqual(final_state['value'], 15)  # (5 * 2) + 5
+        self.assertEqual(final_state['path'], ['start', 'dynamic1', 'dynamic2'])
+        self.assertIn('dynamic1', self.graph.graph.nodes)
+        self.assertIn('dynamic2', self.graph.graph.nodes)
 
     @given(st.lists(st.integers(), min_size=1, max_size=100))
     def test_property_based_state_accumulation(self, values):

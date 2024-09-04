@@ -34,12 +34,13 @@ class StateGraph:
         Final value: 2
     """
 
-    def __init__(self, state_schema: Dict[str, Any]):
+    def __init__(self, state_schema: Dict[str, Any], raise_exceptions: bool = False):
         """
         Initialize the StateGraph.
 
         Args:
             state_schema (Dict[str, Any]): The schema defining the structure of the state.
+            raise_exceptions (bool): If True, exceptions in node functions will be raised instead of being handled internally.
         """
         self.state_schema = state_schema
         self.graph = nx.DiGraph()
@@ -47,6 +48,7 @@ class StateGraph:
         self.graph.add_node(END, run=None)
         self.interrupt_before: List[str] = []
         self.interrupt_after: List[str] = []
+        self.raise_exceptions = raise_exceptions
 
     def add_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
         """
@@ -231,7 +233,7 @@ class StateGraph:
             Dict[str, Any]: Intermediate states, interrupts, and the final state during execution.
 
         Raises:
-            RuntimeError: If no valid next node is found during execution.
+            RuntimeError: If no valid next node is found during execution or if an exception occurs in a node function when raise_exceptions is True.
         """
         current_state = {"values": input_state, "next": START}
 
@@ -244,6 +246,9 @@ class StateGraph:
 
             if node_data.get("run"):
                 result = self._execute_node_function(node_data["run"], current_state["values"], config, current_node)
+                if "error" in result:
+                    yield {"type": "error", "node": current_node, "error": result["error"], "state": current_state["values"]}
+                    return
                 current_state["values"].update(result)
 
             if current_node in self.interrupt_after:
@@ -264,14 +269,20 @@ class StateGraph:
             node (str): The current node name.
 
         Returns:
-            Dict[str, Any]: The result of the function execution.
+            Dict[str, Any]: The result of the function execution or an error state.
 
         Raises:
-            ValueError: If required parameters for the function are not provided.
+            RuntimeError: If raise_exceptions is True and an exception occurs during function execution.
         """
         available_params = {"state": state, "config": config, "node": node, "graph": self}
         function_params = self._prepare_function_params(func, available_params)
-        result = func(**function_params)
+        
+        try:
+            result = func(**function_params)
+        except Exception as e:
+            if self.raise_exceptions:
+                raise RuntimeError(f"Error in node {node}: {str(e)}") from e
+            return {"error": str(e), "node": node}
 
         if isinstance(result, dict):
             return result
