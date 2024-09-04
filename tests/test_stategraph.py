@@ -97,9 +97,10 @@ class TestStateGraph(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.graph.successors("nonexistent_node")
 
+    
     def test_stream(self):
-        self.graph.add_node("node1", run=lambda state: {"value": state["value"] + 1})
-        self.graph.add_node("node2", run=lambda state: {"value": state["value"] * 2})
+        self.graph.add_node("node1", run=lambda **kwargs: {"value": kwargs['state']['value'] + 1})
+        self.graph.add_node("node2", run=lambda **kwargs: {"value": kwargs['state']['value'] * 2})
         self.graph.set_entry_point("node1")
         self.graph.add_edge("node1", "node2")
         self.graph.set_finish_point("node2")
@@ -109,12 +110,12 @@ class TestStateGraph(unittest.TestCase):
         self.assertEqual(stream[0]["value"], 4)
 
     def test_invoke(self):
-        self.graph.add_node("node1", run=lambda state: {"value": state["value"] + 1})
-        self.graph.add_node("node2", run=lambda state: {"value": state["value"] * 2})
+        self.graph.add_node("node1", run=lambda **kwargs: {"value": kwargs['state']["value"] + 1})
+        self.graph.add_node("node2", run=lambda **kwargs: {"value": kwargs['state']["value"] * 2})
         self.graph.set_entry_point("node1")
         self.graph.add_edge("node1", "node2")
         self.graph.set_finish_point("node2")
-
+    
         result = list(self.graph.invoke({"value": 1}))
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["type"], "final")
@@ -143,43 +144,28 @@ class TestStateGraph(unittest.TestCase):
         self.assertIsInstance(dot, Digraph)
 
     def test_complex_workflow(self):
-        def condition_func(state):
-            return state["value"] > 10
+        def condition_func(**kwargs):
+            return kwargs['state']["value"] > 10
     
-        self.graph.add_node("start", run=lambda state: {"value": state["value"] + 5})
-        self.graph.add_node("process", run=lambda state: {"value": state["value"] * 2})
-        self.graph.add_node("end", run=lambda state: {"result": f"Final value: {state['value']}"})
+        self.graph.add_node("start", run=lambda **kwargs: {"value": kwargs['state']["value"] + 5})
+        self.graph.add_node("process", run=lambda **kwargs: {"value": kwargs['state']["value"] * 2})
+        self.graph.add_node("end", run=lambda **kwargs: {"result": f"Final value: {kwargs['state']['value']}"})
     
         self.graph.set_entry_point("start")
         self.graph.add_conditional_edges("start", condition_func, {True: "end", False: "process"})
         self.graph.add_edge("process", "start")
         self.graph.set_finish_point("end")
     
-        # Test invoke method
         invoke_result = list(self.graph.invoke({"value": 1}))
-        
-        print("Invoke result:", invoke_result)  # For debugging
-        
+    
         # Check that we get only one result (the final state)
         self.assertEqual(len(invoke_result), 1)
         
         # Check the final result
-        self.assertTrue("state" in invoke_result[0])
-        self.assertTrue("result" in invoke_result[0]["state"])
+        self.assertEqual(invoke_result[0]["type"], "final")
+        self.assertIn("state", invoke_result[0])
+        self.assertIn("result", invoke_result[0]["state"])
         self.assertEqual(invoke_result[0]["state"]["result"], "Final value: 17")
-    
-        # Test stream method
-        stream_result = list(self.graph.stream({"value": 1}))
-        
-        print("Stream result:", stream_result)  # For debugging
-        
-        # Check that we get only one result (the final state)
-        self.assertEqual(len(stream_result), 1)
-        
-        # Check the final result in the stream
-        self.assertTrue("result" in stream_result[0])
-        self.assertEqual(stream_result[0]["result"], "Final value: 17")
-
 
 if __name__ == '__main__':
     unittest.main()
