@@ -144,6 +144,7 @@ class TestStateGraph(unittest.TestCase):
         self.assertIsInstance(dot, Digraph)
 
     def test_complex_workflow(self):
+
         def condition_func(**kwargs):
             return kwargs['state']["value"] > 10
     

@@ -35,12 +35,12 @@ class StateGraph:
     def add_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
         """
         Add a node to the graph.
-    
+
         Args:
             node (str): The name of the node.
             run (Optional[Callable[..., Any]]): The function to run when this node is active.
                                                 Can accept arbitrary arguments.
-    
+
         Raises:
             ValueError: If the node already exists in the graph.
         """
@@ -61,17 +61,17 @@ class StateGraph:
         """
         if in_node not in self.graph.nodes or out_node not in self.graph.nodes:
             raise ValueError(f"Both nodes must exist in the graph.")
-        self.graph.add_edge(in_node, out_node, cond=lambda **kwargs: True) 
+        self.graph.add_edge(in_node, out_node, cond=lambda **kwargs: True, cond_map={True: out_node})
 
     def add_conditional_edges(self, in_node: str, func: Callable, cond: Dict[Any, str]):
         """
         Add conditional edges from a node based on a function's output.
-    
+
         Args:
             in_node (str): The source node.
             func (Callable): The function to determine the next node.
             cond (Dict[Any, str]): Mapping of function outputs to target nodes.
-    
+
         Raises:
             ValueError: If the source node doesn't exist or if any target node is invalid.
         """
@@ -83,7 +83,8 @@ class StateGraph:
             self.graph.add_edge(
                 in_node,
                 out_node,
-                cond=lambda *args, f=func, cv=cond_value, **kwargs: f(*args, **kwargs) == cv
+                cond=func,
+                cond_map=cond
             )
 
     def set_entry_point(self, init_state: str) -> None:
@@ -98,7 +99,7 @@ class StateGraph:
         """
         if init_state not in self.graph.nodes:
             raise ValueError(f"Node '{init_state}' does not exist in the graph.")
-        self.graph.add_edge(START, init_state, cond=lambda **kwargs: True)  # Changed this line
+        self.graph.add_edge(START, init_state, cond=lambda **kwargs: True, cond_map={True: init_state})
 
     def set_finish_point(self, final_state: str) -> None:
         """
@@ -211,15 +212,15 @@ class StateGraph:
 
     def invoke(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, None]:
         current_state = {"values": input_state, "next": START}
-    
+
         while current_state["next"] != END:
             current_node = current_state["next"]
             node_data = self.node(current_node)
-    
+
             # Check for interrupts before execution
             if current_node in self.interrupt_before:
                 yield {"type": "interrupt", "node": current_node, "state": current_state["values"]}
-    
+
             if "run" in node_data and node_data["run"]:
                 node_function = node_data["run"]
                 available_params = {
@@ -230,19 +231,19 @@ class StateGraph:
                 }
                 function_params = self._prepare_function_params(node_function, available_params)
                 result = node_function(**function_params)
-    
+
                 if isinstance(result, dict):
                     current_state["values"].update(result)
                 else:
                     current_state["values"]["result"] = result
-    
+
             # Check for interrupts after execution
             if current_node in self.interrupt_after:
                 yield {"type": "interrupt", "node": current_node, "state": current_state["values"]}
-    
+
             next_node = self._get_next_node(current_node, current_state["values"], config)
             current_state["next"] = next_node
-    
+
         yield {"type": "final", "state": current_state["values"]}
 
     def _prepare_function_params(
@@ -252,17 +253,20 @@ class StateGraph:
         ) -> Dict[str, Any]:
         """
         Prepare the parameters for a node function based on its signature.
-    
+
         Args:
             func (Callable[..., Any]): The function to prepare parameters for.
             available_params (Dict[str, Any]): Dictionary of available parameters.
-    
+
         Returns:
             Dict[str, Any]: The prepared parameters for the function.
         """
         sig = inspect.signature(func)
         function_params = {}
-    
+
+        if len(sig.parameters) == 0:
+            return {}
+
         for param_name, param in sig.parameters.items():
             if param_name in available_params:
                 function_params[param_name] = available_params[param_name]
@@ -274,7 +278,7 @@ class StateGraph:
                 break
             else:
                 raise ValueError(f"Required parameter '{param_name}' not provided for function '{func.__name__}'")
-    
+
         return function_params
 
     def _get_next_node(self, current_node: str, state: Dict[str, Any], config: Dict[str, Any]) -> str:
@@ -298,8 +302,15 @@ class StateGraph:
                 cond_func = edge_data["cond"]
                 available_params = {"state": state, "config": config}
                 cond_params = self._prepare_function_params(cond_func, available_params)
-                if cond_func(**cond_params):
-                    return successor
+                condition_result = cond_func(**cond_params)
+
+                if "cond_map" in edge_data:
+                    if condition_result in edge_data["cond_map"]:
+                        return edge_data["cond_map"][condition_result]
+                else:
+                    # For backwards compatibility with simple edges
+                    if condition_result:
+                        return successor
 
         raise RuntimeError(f"No valid next node found for '{current_node}'")
 
