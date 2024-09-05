@@ -12,9 +12,6 @@ class TestStateGraph(unittest.TestCase):
         self.graph = StateGraph({"test": "schema"})
 
     def test_init(self):
-        self.assertIsInstance(self.graph.graph, nx.DiGraph)
-        self.assertIn(START, self.graph.graph.nodes)
-        self.assertIn(END, self.graph.graph.nodes)
         self.assertEqual(self.graph.state_schema, {"test": "schema"})
 
     @parameterized.expand([
@@ -23,9 +20,9 @@ class TestStateGraph(unittest.TestCase):
     ])
     def test_add_node(self, name, node, run):
         self.graph.add_node(node, run)
-        self.assertIn(node, self.graph.graph.nodes)
+        node_data = self.graph.node(node)
         if run:
-            self.assertEqual(self.graph.graph.nodes[node]["run"], run)
+            self.assertEqual(node_data["run"], run)
 
     def test_add_node_duplicate(self):
         self.graph.add_node("test_node")
@@ -36,7 +33,7 @@ class TestStateGraph(unittest.TestCase):
         self.graph.add_node("node1")
         self.graph.add_node("node2")
         self.graph.add_edge("node1", "node2")
-        self.assertTrue(self.graph.graph.has_edge("node1", "node2"))
+        self.assertIn("node2", self.graph.successors("node1"))
 
     def test_add_edge_nonexistent_node(self):
         with self.assertRaises(ValueError):
@@ -52,8 +49,8 @@ class TestStateGraph(unittest.TestCase):
 
         self.graph.add_conditional_edges("node1", condition_func, {True: "node2", False: "node3"})
 
-        self.assertTrue(self.graph.graph.has_edge("node1", "node2"))
-        self.assertTrue(self.graph.graph.has_edge("node1", "node3"))
+        self.assertIn("node2", self.graph.successors("node1"))
+        self.assertIn("node3", self.graph.successors("node1"))
 
     def test_add_conditional_edges_nonexistent_node(self):
         with self.assertRaises(ValueError):
@@ -62,7 +59,7 @@ class TestStateGraph(unittest.TestCase):
     def test_set_entry_point(self):
         self.graph.add_node("start_node")
         self.graph.set_entry_point("start_node")
-        self.assertTrue(self.graph.graph.has_edge(START, "start_node"))
+        self.assertIn("start_node", self.graph.successors(START))
 
     def test_set_entry_point_nonexistent_node(self):
         with self.assertRaises(ValueError):
@@ -71,7 +68,7 @@ class TestStateGraph(unittest.TestCase):
     def test_set_finish_point(self):
         self.graph.add_node("end_node")
         self.graph.set_finish_point("end_node")
-        self.assertTrue(self.graph.graph.has_edge("end_node", END))
+        self.assertIn(END, self.graph.successors("end_node"))
 
     def test_set_finish_point_nonexistent_node(self):
         with self.assertRaises(ValueError):
@@ -368,11 +365,11 @@ class TestStateGraph(unittest.TestCase):
             return state
 
         def dynamic_add_node(state, graph):
-            if 'dynamic1' not in graph.graph.nodes:
+            if 'dynamic1' not in graph.successors('dynamic_adder'):
                 graph.add_node('dynamic1', run=lambda state: {**state, 'value': state['value'] * 2, 'path': state['path'] + ['dynamic1']})
                 graph.add_edge('dynamic_adder', 'dynamic1')
 
-            if 'dynamic2' not in graph.graph.nodes:
+            if 'dynamic2' not in graph.successors('dynamic1'):
                 graph.add_node('dynamic2', run=lambda state: {**state, 'value': state['value'] + 5, 'path': state['path'] + ['dynamic2']})
                 graph.add_edge('dynamic1', 'dynamic2')
 
@@ -387,16 +384,10 @@ class TestStateGraph(unittest.TestCase):
         result = list(self.graph.invoke({"value": 5, "path": []}))
         final_state = result[-1]['state']
 
-        # Print debug information
-        print("Result:", result)
-        print("Final state:", final_state)
-        print("Graph nodes:", self.graph.graph.nodes)
-        print("Graph edges:", self.graph.graph.edges)
-
         self.assertEqual(final_state['value'], 15)  # (5 * 2) + 5
         self.assertEqual(final_state['path'], ['start', 'dynamic1', 'dynamic2'])
-        self.assertIn('dynamic1', self.graph.graph.nodes)
-        self.assertIn('dynamic2', self.graph.graph.nodes)
+        self.assertIn('dynamic1', self.graph.successors('dynamic_adder'))
+        self.assertIn('dynamic2', self.graph.successors('dynamic1'))
 
     def test_exception_in_conditional_edge(self):
         def faulty_condition(state):
