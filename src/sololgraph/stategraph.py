@@ -1,7 +1,7 @@
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Union, Generator
 import networkx as nx
-from graphviz import Digraph
+from networkx.drawing.nx_agraph import to_agraph
 
 
 # Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
@@ -354,34 +354,52 @@ class StateGraph:
 
         raise RuntimeError(f"No valid next node found for '{current_node}'")
 
-    def render_graphviz(self) -> Digraph:
+    def render_graphviz(self):
         """
-        Render the graph using Graphviz.
+        Render the graph using NetworkX and Graphviz.
 
         Returns:
-            Digraph: A Graphviz representation of the graph.
+            pygraphviz.AGraph: A PyGraphviz graph object representing the StateGraph.
         """
-        dot = Digraph()
+        # Create a new directed graph
+        G = nx.DiGraph()
 
-        for node in self.graph.nodes:
-            label = node
-            if node in self.interrupt_before:
-                label += "\ninterrupt_before: True"
-            else:
-                label += "\ninterrupt_before: False"
+        # Add nodes with attributes
+        for node in self.graph.nodes():
+            label = f"{node}\n"
+            label += f"interrupt_before: {node in self.interrupt_before}\n"
+            label += f"interrupt_after: {node in self.interrupt_after}"
+            G.add_node(node, label=label)
 
-            if node in self.interrupt_after:
-                label += "\ninterrupt_after: True"
-            else:
-                label += "\ninterrupt_after: False"
-
-            dot.node(node, label=label)
-
-        for u, v in self.graph.edges:
+        # Add edges with attributes
+        for u, v, data in self.graph.edges(data=True):
             edge_label = ""
-            cond_func = self.graph.edges[u, v]["cond"]
-            if cond_func:
-                edge_label = "condition"
-            dot.edge(u, v, label=edge_label)
+            if 'cond' in data:
+                cond = data['cond']
+                if callable(cond) and cond.__name__ != '<lambda>':
+                    edge_label = "condition"
+                elif isinstance(cond, dict) and len(cond) > 1:
+                    edge_label = "condition"
+            G.add_edge(u, v, label=edge_label)
 
-        return dot
+        # Convert to a PyGraphviz graph
+        A = to_agraph(G)
+
+        # Set graph attributes
+        A.graph_attr.update(rankdir="TB", size="8,8")
+        A.node_attr.update(shape="rectangle", style="filled", fillcolor="white")
+        A.edge_attr.update(color="black")
+
+        return A
+
+
+    def save_graph_image(self, filename="state_graph.png"):
+        """
+        Save the graph as an image file.
+
+        Args:
+            filename (str): The name of the file to save the graph image to.
+        """
+        A = self.render_graphviz()
+        A.layout(prog='dot')
+        A.draw(filename)

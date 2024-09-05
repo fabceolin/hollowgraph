@@ -1,3 +1,4 @@
 graphviz==0.20.3
 langchain==0.2.15
 networkx==3.3
+pygraphviz==1.13
