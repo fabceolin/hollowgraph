@@ -763,5 +763,109 @@ class TestStateGraph(unittest.TestCase):
         result = list(self.graph.invoke({"value": 5}))
         self.assertEqual(result[-1]["state"]["final_result"], 18)  # 5+0 + 5+1 + 5+2 = 18
 
+    def test_document_writer_graph_structure_with_interruptions(self):
+        
+        def render_and_save_graph(graph, filename="state_graph.png"):
+            try:
+                graph.save_graph_image(filename)
+                print(f"Graph image saved as {filename}")
+            except Exception as e:
+                print(f"Error saving graph image: {str(e)}")
+
+        def create_node_function(name):
+            def node_function(state, config=None):
+                new_state = state.copy()
+                new_state["state"] = name
+                new_state["result"] = f"Executed {name}"
+                return new_state
+            node_function.__name__ = f"{name}_run"
+            return node_function
+
+        state_nodes = {
+            "A": create_node_function("A"),
+            "B": create_node_function("B"),
+            "C": create_node_function("C"),
+            "D": create_node_function("D"),
+            "E": create_node_function("E"),
+            "F": create_node_function("F"),
+            "G": create_node_function("G"),
+            "H": create_node_function("H"),
+            "I": create_node_function("I"),
+            "J": create_node_function("J"),
+            "K": create_node_function("K"),
+            "L": create_node_function("L"),
+        }
+
+        for name, func in state_nodes.items():
+            self.graph.add_node(name, func)
+
+        def is_b_complete(state):
+            return "ahead" if not state.get("messages") else "behind"
+
+        def is_e_complete(state, config):
+            return "E" if config["configurable"]["instruction"] else "F"
+
+        def is_g_complete(state, config):
+            state["revision_number"] += 1
+            if config["configurable"]["instruction"]:
+                return "loop"
+            elif state["revision_number"] <= state["max_revisions"]:
+                return "condition2"
+            else:
+                return "condition"
+
+        self.graph.add_conditional_edges("B", is_b_complete, {"ahead": "C", "behind": "A"})
+        self.graph.add_conditional_edges("E", is_e_complete, {"E": "E", "F": "F"})
+        self.graph.add_conditional_edges("G", is_g_complete, {"loop": "G", "condition2": "H", "condition": "I"})
+
+        self.graph.add_edge("A", "B")
+        self.graph.add_edge("C", "D")
+        self.graph.add_edge("D", "E")
+        self.graph.add_edge("F", "G")
+        self.graph.add_edge("H", "F")
+        self.graph.add_edge("I", "J")
+        self.graph.add_edge("J", "K")
+        self.graph.add_edge("K", "L")
+        self.graph.add_edge("L", END)
+
+        self.graph.set_entry_point("A")
+
+        interrupt_before = ["B", "E", "G", "K"]
+        interrupt_after = []
+        compiled_graph = self.graph.compile(interrupt_before=interrupt_before, interrupt_after=interrupt_after)
+
+        render_and_save_graph(compiled_graph, "anonymized_graph.png")
+
+        initial_state = {"state": "A", "values": {"test": "initial"}, "revision_number": 0, "max_revisions": 3}
+        config = {"configurable": {"instruction": ""}}
+
+        max_iterations = 100
+        events = []
+        for i, event in enumerate(compiled_graph.stream(initial_state, config)):
+            events.append(event)
+            if i >= max_iterations:
+                raise RuntimeError(f"Maximum number of iterations ({max_iterations}) reached. Possible infinite loop detected.")
+
+        interrupt_points = [event for event in events if event.get("type") == "interrupt"]
+        assert len(interrupt_points) > 0, "No interrupts occurred"
+
+        interrupt_nodes = [event["node"] for event in interrupt_points]
+        assert "B" in interrupt_nodes
+        assert "E" in interrupt_nodes
+        assert "G" in interrupt_nodes
+
+        for interrupt in interrupt_points:
+            assert interrupt["node"] in interrupt_before
+
+        final_event = events[-1]
+        print("Test completed successfully!")
+        print(f"Total events: {len(events)}")
+        print(f"Final event: {final_event}")
+
+        assert "result" in final_event, "Final event should contain a 'result' key"
+        assert final_event["result"] == "Executed L", "Unexpected final state"
+        assert final_event["revision_number"] == 4, "Unexpected revision number in final state"
+        assert final_event["state"] == "L", "Unexpected final state name"
+
 if __name__ == '__main__':
     unittest.main()
