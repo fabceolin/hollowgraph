@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 import sys
 
-
+print sys.version_info
 
 # Conditional dependencies based on Python version
 if sys.version_info >= (3, 10):
