@@ -1,15 +1,6 @@
 from setuptools import setup, find_packages
 import sys
 
-print (sys.version_info)
-
-# Conditional dependencies based on Python version
-if sys.version_info >= (3, 10):
-    networkx_version = "networkx==3.3"
-else:
-    networkx_version = "networkx==3.2.1"
-
-
 setup(
     name="hollowgraph",
     version="0.0.1",
@@ -32,6 +23,6 @@ setup(
         "pygraphviz==1.13",
     ],
     extras_require={
-        "dev": ["pytest", "coverage", "hypothesis","parametrized"],
+        "dev": ["pytest", "coverage", "hypothesis","parameterized==0.9.0"],
     },
 )
