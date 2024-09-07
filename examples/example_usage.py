@@ -1,5 +1,4 @@
 from sololgraph import StateGraph, START, END
-from langchain_community.chat_models import ChatPerplexity
 
 # Initialize the StateGraph
 graph = StateGraph({"value": int, "result": str})

@@ -1,15 +1,15 @@
 # Hollowgraph
 
-Hollowgraph is a lightweight, single-app state graph library inspired by LangGraph. It focuses on simplicity for use with local standalone AI agents, providing an easy-to-use framework for building state-driven workflows without the need for complex systems.
-
+Hollowgraph is a lightweight, single-app state graph library inspired by LangGraph. It focuses on simplicity for use with local standalone AI agents, providing an easy-to-use framework for building state-driven LLM workflows without unnecessary features for running single apps.
 
 ## Features
 
 - Simple state management
 - Easy-to-use graph construction
-- Single thread focus
+- Single app focus
 - Streamlined workflow creation
-- Ease integration with language models (like GPT)
+- Ease integration with any language models (like GPT)
+- LLM library agnostic
 - Visualization of state graphs
 
 ## Installation
@@ -18,7 +18,6 @@ You can install Hollowgraph using pip:
 
 ```bash
 pip install git+https://github.com/fabceolin/hollowgraph.git
-```
 
 # Quick Start
 Here's a simple example to get you started:
