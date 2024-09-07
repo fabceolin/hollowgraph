@@ -1,11 +1,11 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="sololgraph",
+    name="hollowgraph",
     version="0.0.1",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
-    description="A lightweight, single-thread state graph library inspired by LangGraph",
+    description="A lightweight, single-app state graph library inspired by LangGraph",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/fabceolin/sololgraph",
@@ -18,10 +18,13 @@ setup(
     ],
     python_requires=">=3.7",
     install_requires=[
-        "networkx",
-        "graphviz",
+        "networkx==3.3",
+        "pygraphviz==1.13",
+        "hypothesis==6.112.0",
+        "pytest==8.3.2",
+        "pygraphviz==1.13",
     ],
     extras_require={
-        "dev": ["pytest", "coverage"],
+        "dev": ["pytest", "coverage", "hypothesis","parametrized"],
     },
 )
