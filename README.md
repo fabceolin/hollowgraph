@@ -16,15 +16,15 @@ Hollowgraph is a lightweight, single-app state graph library inspired by LangGra
 
 You can install Hollowgraph using pip:
 
-```bash
+```
 pip install git+https://github.com/fabceolin/hollowgraph.git
+```
 
 # Quick Start
 Here's a simple example to get you started:
 
-```python
+```
 from hollowgraph import StateGraph, START, END
-from langchain_community.chat_models import ChatPerplexity
 
 # Initialize the StateGraph
 graph = StateGraph({"value": int, "result": str})
@@ -50,6 +50,8 @@ result = compiled_graph.invoke({"value": 1})
 
 print(result)
 ```
+
+A full example with llm capabilities can be found in the examples directory.
 
 # Contributing
 We welcome contributions! Please see our contributing guidelines for more details.
