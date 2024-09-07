@@ -3,7 +3,7 @@ import sys
 
 setup(
     name="hollowgraph",
-    version="0.0.1",
+    version="0.0.4",
     author="Fabricio Ceolin",
     author_email="fabceolin@gmail.com",
     description="A lightweight, single-app state graph library inspired by LangGraph",
