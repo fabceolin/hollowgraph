@@ -5,7 +5,7 @@ import pygraphviz as pgv
 from unittest.mock import patch
 from parameterized import parameterized
 from hypothesis import given, strategies as st, settings
-from sololgraph import StateGraph, START, END
+from hollowgraph import StateGraph, START, END
 
 class TestStateGraph(unittest.TestCase):
 
@@ -416,7 +416,7 @@ class TestStateGraph(unittest.TestCase):
         self.assertEqual(results[0]["type"], "error")
         self.assertIn("Test error", results[0]["error"])
 
-    @patch('sololgraph.StateGraph._get_next_node')
+    @patch('hollowgraph.StateGraph._get_next_node')
     def test_no_valid_next_node(self, mock_get_next_node):
         """
         Verify that the graph correctly handles the case where no valid next node is found during execution.

@@ -1,6 +1,7 @@
-# SoloLGraph
+# Hollowgraph
 
-SololGraph is a lightweight, single-thread-agent state graph library inspired by LangGraph. It focuses on simplicity and ease of use for scenarios where complex multi-thread systems are not required.
+Hollowgraph is a lightweight, single-app state graph library inspired by LangGraph. It focuses on simplicity for use with local standalone AI agents, providing an easy-to-use framework for building state-driven workflows without the need for complex systems.
+
 
 ## Features
 
@@ -13,17 +14,17 @@ SololGraph is a lightweight, single-thread-agent state graph library inspired by
 
 ## Installation
 
-You can install SololGraph using pip:
+You can install Hollowgraph using pip:
 
 ```bash
-pip install sololgraph
+pip install git+https://github.com/fabceolin/hollowgraph.git
 ```
 
 # Quick Start
 Here's a simple example to get you started:
 
 ```python
-from sololgraph import StateGraph, START, END
+from hollowgraph import StateGraph, START, END
 from langchain_community.chat_models import ChatPerplexity
 
 # Initialize the StateGraph
@@ -55,9 +56,9 @@ print(result)
 We welcome contributions! Please see our contributing guidelines for more details.
 
 # License
-SololGraph is released under the MIT License. See the LICENSE file for more details.
+Hollowgraph is released under the MIT License. See the LICENSE file for more details.
 
 # Acknowledgements
-SololGraph is inspired by LangGraph. We thank the LangGraph team for their innovative work in the field of language model workflows.
+Hollowgraph is inspired by LangGraph. We thank the LangGraph team for their innovative work in the field of language model workflows.
 
 
