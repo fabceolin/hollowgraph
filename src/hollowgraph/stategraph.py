@@ -4,7 +4,7 @@ import networkx as nx
 from networkx.drawing.nx_agraph import to_agraph
 
 
-# Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
+# Copyright (c) 2024 Fabrício Ceolin, Claudionor Coelho Jr.
 
 START = "__start__"
 END = "__end__"
