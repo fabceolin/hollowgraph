@@ -29,10 +29,25 @@ from hollowgraph import StateGraph, START, END
 # Initialize the StateGraph
 graph = StateGraph({"value": int, "result": str})
 
-# Add nodes
-graph.add_node("start", lambda state: {"value": state["value"] + 5})
-graph.add_node("process", lambda state: {"value": state["value"] * 2})
-graph.add_node("end", lambda state: {"result": f"Final value: {state['value']}"})
+# Add nodes with print statements
+def start_node(state):
+    new_state = {"value": state["value"] + 5}
+    print(f"Start node: {state} -> {new_state}")
+    return new_state
+
+def process_node(state):
+    new_state = {"value": state["value"] * 2}
+    print(f"Process node: {state} -> {new_state}")
+    return new_state
+
+def end_node(state):
+    new_state = {"result": f"Final value: {state['value']}"}
+    print(f"End node: {state} -> {new_state}")
+    return new_state
+
+graph.add_node("start", start_node)
+graph.add_node("process", process_node)
+graph.add_node("end", end_node)
 
 # Add edges
 graph.set_entry_point("start")
@@ -44,11 +59,33 @@ graph.add_conditional_edges(
 graph.add_edge("process", "start")
 graph.set_finish_point("end")
 
-# Compile and run the graph
+# Compile the graph
 compiled_graph = graph.compile()
-result = compiled_graph.invoke({"value": 1})
 
-print(result)
+# Run the graph and print results
+print("Starting graph execution:")
+results = list(compiled_graph.invoke({"value": 1}))
+
+print("\nFinal result:")
+for result in results:
+    print(result)
+```
+
+Graph navigation
+```
+
+  ┌──────────────────────────┐
+  │                          ▼
+┌─────────┐  value <= 10   ┌─────────────┐
+│ process │ ◀───────────── │    start    │
+└─────────┘                └─────────────┘
+                             │
+                             │ value > 10
+                             ▼
+                           ╔═════════════╗
+                           ║     end     ║
+                           ╚═════════════╝
+
 ```
 
 A full example with llm capabilities can be found in the examples directory.
