@@ -67,6 +67,32 @@ def human_escalation(state):
         return {"response": "Thank you for contacting us. Your case has been resolved.", "escalate": False}
 
 def create_customer_support_graph():
+    """
+
+                                         ┌──────────────────────┐
+                                         │      categorize      │
+                                         └──────────────────────┘
+                                           │
+                                           │
+                                           ▼
+                                         ┌──────────────────────┐
+                                         │  generate_response   │
+                                         └──────────────────────┘
+                                           │
+                                           │
+                                           ▼
+┌──────────────────┐  escalate == True   ┌──────────────────────┐
+│ human_escalation │ ◀────────────────── │ determine_escalation │ ◀┐
+└──────────────────┘                     └──────────────────────┘  │
+  │                                        │                       │
+  │                                        │ escalate == False     │
+  │                                        ▼                       │
+  │                                      ╔══════════════════════╗  │
+  │                                      ║         END          ║  │
+  │                                      ╚══════════════════════╝  │
+  │                                                                │
+  └────────────────────────────────────────────────────────────────┘
+    """
     logging.debug("Creating customer support graph")
     graph = StateGraph({"customer_query": str, "category": str, "response": str, "escalate": bool})
 
