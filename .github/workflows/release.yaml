@@ -6,7 +6,7 @@ permissions:
 on:
   push:
     tags:
-      - 'v*' # Trigger on tags starting with 'v'
+      - '*' # Trigger on tags starting with 'v'
 
 jobs:
   build:
