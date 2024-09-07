@@ -28,8 +28,9 @@ jobs:
 
       - name: Build package
         run: python setup.py sdist bdist_wheel
-        
+
       - name: Create Release
+        id: create_release  # Add this line to assign an ID to the step
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref }}
@@ -49,7 +50,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          upload_url: ${{ steps.create_release.outputs.upload_url }}  # Referencing the output of the Create Release step
           asset_path: ./dist/${{ env.PKG_NAME }}
           asset_name: ${{ env.PKG_NAME }}
           asset_content_type: application/octet-stream
@@ -59,7 +60,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          upload_url: ${{ steps.create_release.outputs.upload_url }}  # Same fix here
           asset_path: ./dist/${{ github.event.repository.name }}-${{ github.ref_name }}.tar.gz
           asset_name: ${{ github.event.repository.name }}-${{ github.ref_name }}.tar.gz
           asset_content_type: application/gzip
+
+
