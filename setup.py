@@ -1,4 +1,6 @@
 from setuptools import setup, find_packages
+import sys
+
 
 
 # Conditional dependencies based on Python version
