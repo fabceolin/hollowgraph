@@ -87,8 +87,19 @@ Graph navigation
                            ╚═════════════╝
 
 ```
+output:
+```
+Starting graph execution:
+Start node: {'value': 1} -> {'value': 6}
+Process node: {'value': 6} -> {'value': 12}
+Start node: {'value': 12} -> {'value': 17}
+End node: {'value': 17} -> {'result': 'Final value: 17'}
 
-A full example with llm capabilities can be found in the examples directory.
+Final result:
+{'type': 'final', 'state': {'value': 17, 'result': 'Final value: 17'}}
+```
+
+A full example with LLM capabilities can be found in the examples directory.
 
 # Contributing
 We welcome contributions! Please see our contributing guidelines for more details.
