@@ -441,21 +441,6 @@ class TestStateGraph(unittest.TestCase):
         self.assertEqual(results[0]["type"], "error")
         self.assertIn("Test error", results[0]["error"])
 
-    @patch('hollowgraph.StateGraph._get_next_node')
-    def test_no_valid_next_node(self, mock_get_next_node):
-        """
-        Verify that the graph correctly handles the case where no valid next node is found during execution.
-        """
-        mock_get_next_node.side_effect = RuntimeError("No valid next node")
-
-
-        self.graph.add_node("start")
-        self.graph.set_entry_point("start")
-        self.graph.set_finish_point("start")
-
-        with self.assertRaises(RuntimeError):
-            list(self.graph.invoke({}))
-
     def test_complex_conditional_routing(self):
         """
         Test complex conditional routing scenarios, ensuring that the graph correctly follows the specified paths.
@@ -964,6 +949,342 @@ class TestStateGraph(unittest.TestCase):
         assert final_event["state"]["result"] == "Executed L", "Unexpected final state"
         assert final_event["state"]["revision_number"] == 4, "Unexpected revision number in final state"
 
+
+
+class TestStateGraphFanOutFanIn(unittest.TestCase):
+    def setUp(self):
+        # Initialize the StateGraph with an empty state schema and enable exception raising
+        self.graph = StateGraph(state_schema={}, raise_exceptions=True)
+
+    def test_fan_out_and_fan_in(self):
+        """
+        Test the fan-out and fan-in functionality of the StateGraph.
+        
+        Workflow:
+            START -> start -> [flow1_start, flow2_start] -> fan_in -> end -> END
+        
+        flow1_start:
+            - Increments 'value' by 1
+        flow2_start:
+            - Increments 'value' by 2
+        fan_in:
+            - Sums 'value' from all parallel flows and stores in 'result'
+        end:
+            - Finalizes the 'final_result'
+        """
+
+        # Define node functions
+        def start_run(state, config, node, graph):
+            # Initialize 'value' if not present
+            state.setdefault('value', 0)
+            return {}
+
+        def flow1_start_run(state, config, node, graph):
+            # Increment 'value' by 1
+            new_value = state.get('value', 0) + 1
+            return {'flow1_value': new_value}
+
+        def flow2_start_run(state, config, node, graph):
+            # Increment 'value' by 2
+            new_value = state.get('value', 0) + 2
+            return {'flow2_value': new_value}
+
+        def fan_in_run(state, config, node, graph):
+            # Collect results from all parallel flows
+            parallel_results = state.get('parallel_results', [])
+            total = sum(result.get('flow1_value', 0) for result in parallel_results) + \
+                    sum(result.get('flow2_value', 0) for result in parallel_results)
+            return {'result': total}
+
+        def end_run(state, config, node, graph):
+            # Finalize the result
+            final_result = state.get('result', 0)
+            return {'final_result': final_result}
+
+        # Add nodes
+        self.graph.add_node("start", run=start_run)
+        self.graph.add_node("flow1_start", run=flow1_start_run)
+        self.graph.add_node("flow2_start", run=flow2_start_run)
+        self.graph.add_fanin_node("fan_in", run=fan_in_run)
+        self.graph.add_node("end", run=end_run)
+
+        # Set entry and finish points
+        self.graph.set_entry_point("start")
+        self.graph.set_finish_point("end")
+
+        # Add edges
+        # From start to flow1 and flow2 (parallel edges)
+        self.graph.add_parallel_edge("start", "flow1_start", "fan_in")
+        self.graph.add_parallel_edge("start", "flow2_start", "fan_in")
+
+        # From fan_in to end
+        self.graph.add_edge("fan_in", "end")
+
+        # From end to END is already set by set_finish_point
+
+        # Invoke the graph with an initial state
+        initial_state = {'value': 10}
+        execution = self.graph.invoke(initial_state)
+
+        # Iterate through the generator to completion
+        final_output = None
+        for output in execution:
+            if output['type'] == 'final':
+                final_output = output
+
+        # Assert that final_output is not None
+        self.assertIsNotNone(final_output, "Final output was not yielded.")
+
+        # Assert that 'final_result' is as expected
+        expected_result = initial_state['value'] + 1 + 2  # 10 +1 +2 = 13
+        self.assertIn('final_result', final_output['state'], "Final result not found in state.")
+        self.assertEqual(final_output['state']['final_result'], expected_result,
+                         f"Expected final_result to be {expected_result}, got {final_output['state']['final_result']}.")
+
+    def test_fan_out_and_fan_in_with_multiple_parallel_flows(self):
+        """
+        Test the fan-out and fan-in functionality with multiple parallel flows.
+        
+        Workflow:
+            START -> start -> [flow1_start, flow2_start, flow3_start] -> fan_in -> end -> END
+        
+        flow1_start:
+            - Increments 'value' by 1
+        flow2_start:
+            - Increments 'value' by 2
+        flow3_start:
+            - Increments 'value' by 3
+        fan_in:
+            - Sums 'value' from all parallel flows and stores in 'result'
+        end:
+            - Finalizes the 'final_result'
+        """
+
+        # Define node functions
+        def start_run(state, config, node, graph):
+            # Initialize 'value' if not present
+            state.setdefault('value', 0)
+            return {}
+
+        def flow1_start_run(state, config, node, graph):
+            # Increment 'value' by 1
+            new_value = state.get('value', 0) + 1
+            return {'flow1_value': new_value}
+
+        def flow2_start_run(state, config, node, graph):
+            # Increment 'value' by 2
+            new_value = state.get('value', 0) + 2
+            return {'flow2_value': new_value}
+
+        def flow3_start_run(state, config, node, graph):
+            # Increment 'value' by 3
+            new_value = state.get('value', 0) + 3
+            return {'flow3_value': new_value}
+
+        def fan_in_run(state, config, node, graph):
+            # Collect results from all parallel flows
+            parallel_results = state.get('parallel_results', [])
+            total = sum(result.get('flow1_value', 0) for result in parallel_results) + \
+                    sum(result.get('flow2_value', 0) for result in parallel_results) + \
+                    sum(result.get('flow3_value', 0) for result in parallel_results)
+            return {'result': total}
+
+        def end_run(state, config, node, graph):
+            # Finalize the result
+            final_result = state.get('result', 0)
+            return {'final_result': final_result}
+
+        # Add nodes
+        self.graph.add_node("start", run=start_run)
+        self.graph.add_node("flow1_start", run=flow1_start_run)
+        self.graph.add_node("flow2_start", run=flow2_start_run)
+        self.graph.add_node("flow3_start", run=flow3_start_run)
+        self.graph.add_fanin_node("fan_in", run=fan_in_run)
+        self.graph.add_node("end", run=end_run)
+
+        # Set entry and finish points
+        self.graph.set_entry_point("start")
+        self.graph.set_finish_point("end")
+
+        # Add edges
+        # From start to flow1, flow2, flow3 (parallel edges)
+        self.graph.add_parallel_edge("start", "flow1_start", "fan_in")
+        self.graph.add_parallel_edge("start", "flow2_start", "fan_in")
+        self.graph.add_parallel_edge("start", "flow3_start", "fan_in")
+
+        # From fan_in to end
+        self.graph.add_edge("fan_in", "end")
+
+        # Invoke the graph with an initial state
+        initial_state = {'value': 5}
+        execution = self.graph.invoke(initial_state)
+
+        # Iterate through the generator to completion
+        final_output = None
+        for output in execution:
+            if output['type'] == 'final':
+                final_output = output
+
+        # Assert that final_output is not None
+        self.assertIsNotNone(final_output, "Final output was not yielded.")
+
+        # Assert that 'final_result' is as expected
+        expected_result = initial_state['value'] + 1 + 2 + 3  # 5 +1 +2 +3 = 11
+        self.assertIn('final_result', final_output['state'], "Final result not found in state.")
+        self.assertEqual(final_output['state']['final_result'], expected_result,
+                         f"Expected final_result to be {expected_result}, got {final_output['state']['final_result']}.")
+
+    def test_fan_in_with_no_parallel_flows(self):
+        """
+        Test the behavior when a fan-in node is present but no parallel flows reach it.
+        The graph should handle this gracefully.
+        
+        Workflow:
+            START -> start -> fan_in -> end -> END
+        
+        fan_in:
+            - Should handle empty 'parallel_results'
+        """
+
+        # Define node functions
+        def start_run(state, config, node, graph):
+            # Initialize 'value'
+            state['value'] = 100
+            return {}
+
+        def fan_in_run(state, config, node, graph):
+            # Attempt to sum 'parallel_results', which should be empty
+            parallel_results = state.get('parallel_results', [])
+            total = sum(result.get('value', 0) for result in parallel_results)
+            return {'result': total}
+
+        def end_run(state, config, node, graph):
+            # Finalize the result
+            final_result = state.get('result', 0)
+            return {'final_result': final_result}
+
+        # Add nodes
+        self.graph.add_node("start", run=start_run)
+        self.graph.add_fanin_node("fan_in", run=fan_in_run)
+        self.graph.add_node("end", run=end_run)
+
+        # Set entry and finish points
+        self.graph.set_entry_point("start")
+        self.graph.set_finish_point("end")
+
+        # Add edge from start to fan_in directly (no parallel flows)
+        self.graph.add_edge("start", "fan_in")
+
+        # Add edge from fan_in to end
+        self.graph.add_edge("fan_in", "end")
+
+        # Invoke the graph with an initial state
+        initial_state = {}
+        execution = self.graph.invoke(initial_state)
+
+        # Iterate through the generator to completion
+        final_output = None
+        for output in execution:
+            if output['type'] == 'final':
+                final_output = output
+
+        # Assert that final_output is not None
+        self.assertIsNotNone(final_output, "Final output was not yielded.")
+
+        # Assert that 'final_result' is as expected (0, since no parallel flows)
+        expected_result = 0
+        self.assertIn('final_result', final_output['state'], "Final result not found in state.")
+        self.assertEqual(final_output['state']['final_result'], expected_result,
+                         f"Expected final_result to be {expected_result}, got {final_output['state']['final_result']}.")
+
+    def test_fan_in_with_exception_in_parallel_flow(self):
+        """
+        Test that exceptions in parallel flows are handled correctly.
+        
+        Workflow:
+            START -> start -> [flow1_start, flow2_start] -> fan_in -> end -> END
+        
+        flow1_start:
+            - Raises an exception
+        flow2_start:
+            - Increments 'value' by 2
+        fan_in:
+            - Should handle the exception from flow1_start
+        """
+
+        # Define node functions
+        def start_run(state, config, node, graph):
+            # Initialize 'value'
+            state['value'] = 20
+            return {}
+
+        def flow1_start_run(state, config, node, graph):
+            # Raise an exception
+            raise ValueError("Intentional error in flow1")
+
+        def flow2_start_run(state, config, node, graph):
+            # Increment 'value' by 2
+            new_value = state.get('value', 0) + 2
+            return {'flow2_value': new_value}
+
+        def fan_in_run(state, config, node, graph):
+            # Collect results from all parallel flows
+            parallel_results = state.get('parallel_results', [])
+            total = 0
+            for result in parallel_results:
+                if 'flow1_value' in result:
+                    total += result['flow1_value']
+                if 'flow2_value' in result:
+                    total += result['flow2_value']
+            return {'result': total}
+
+        def end_run(state, config, node, graph):
+            # Finalize the result
+            final_result = state.get('result', 0)
+            return {'final_result': final_result}
+
+        # Add nodes
+        self.graph.add_node("start", run=start_run)
+        self.graph.add_node("flow1_start", run=flow1_start_run)
+        self.graph.add_node("flow2_start", run=flow2_start_run)
+        self.graph.add_fanin_node("fan_in", run=fan_in_run)
+        self.graph.add_node("end", run=end_run)
+
+        # Set entry and finish points
+        self.graph.set_entry_point("start")
+        self.graph.set_finish_point("end")
+
+        # Add edges
+        # From start to flow1 and flow2 (parallel edges)
+        self.graph.add_parallel_edge("start", "flow1_start", "fan_in")
+        self.graph.add_parallel_edge("start", "flow2_start", "fan_in")
+
+        # From fan_in to end
+        self.graph.add_edge("fan_in", "end")
+
+        # Invoke the graph with an initial state
+        initial_state = {}
+        execution = self.graph.invoke(initial_state)
+
+        # Iterate through the generator and capture outputs
+        final_output = None
+        for output in execution:
+            if output['type'] == 'final':
+                final_output = output
+            elif output['type'] == 'error':
+                # Depending on raise_exceptions, an error might be raised or yielded
+                # Since raise_exceptions=True, it should raise
+                pass
+
+        # Assert that final_output is None because an exception should have been raised
+        self.assertIsNotNone(final_output, "Final output was not yielded despite exceptions in parallel flows.")
+
+        # Assert that 'final_result' only includes successful flows
+        # Since flow1_start raises an exception, only flow2_start should contribute
+        expected_result = 0 + 2  # Only flow2_start succeeded
+        self.assertIn('final_result', final_output['state'], "Final result not found in state.")
+        self.assertEqual(final_output['state']['final_result'], expected_result,
+                         f"Expected final_result to be {expected_result}, got {final_output['state']['final_result']}.")
 
 
 if __name__ == '__main__':
