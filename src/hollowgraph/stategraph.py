@@ -38,7 +38,6 @@ class StateGraph:
         Final value: 2
     """
 
-        # ... (existing initialization code)
     def __init__(self, state_schema: Dict[str, Any], raise_exceptions: bool = False):
         """
         Initialize the StateGraph.
