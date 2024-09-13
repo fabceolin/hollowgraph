@@ -203,60 +203,115 @@ class StateGraph:
 
     def stream(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, None]:
         """
-        Stream the execution of the graph, yielding intermediate states.
+        Execute the graph, yielding results at each node execution, including interrupts.
 
         Args:
             input_state (Dict[str, Any]): The initial state.
             config (Dict[str, Any]): Configuration for the execution.
 
         Yields:
-            Dict[str, Any]: Intermediate states and interrupts during execution.
+            Dict[str, Any]: Intermediate states, interrupts, errors, and the final state during execution.
         """
-        for result in self.invoke(input_state, config):
-            if result["type"] == "interrupt":
-                yield result
-            elif result["type"] == "final":
-                yield result["state"]
-                return
-            else:
-                yield result
+        current_node = START
+        state = input_state.copy()
+        config = config.copy()
+
+        while current_node != END:
+            # Check for interrupt before
+            if current_node in self.interrupt_before:
+                yield {"type": "interrupt_before", "node": current_node, "state": state.copy()}
+
+            # Get node data
+            node_data = self.node(current_node)
+            run_func = node_data.get("run")
+
+            # Execute node's run function if present
+            if run_func:
+                try:
+                    result = self._execute_node_function(run_func, state, config, current_node)
+                    state.update(result)
+                    # Yield intermediate state after execution
+                    yield {"type": "state", "node": current_node, "state": state.copy()}
+                except Exception as e:
+                    if self.raise_exceptions:
+                        raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                    else:
+                        yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                        return
+
+            # Check for interrupt after
+            if current_node in self.interrupt_after:
+                yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
+
+            # Determine next node
+            next_node = self._get_next_node(current_node, state, config)
+            if not next_node:
+                error_msg = f"No valid next node found from node '{current_node}'"
+                if self.raise_exceptions:
+                    raise RuntimeError(error_msg)
+                else:
+                    yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                    return
+
+            current_node = next_node
+
+        # Once END is reached, yield final state
+        yield {"type": "final", "state": state.copy()}
 
     def invoke(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, None]:
         """
-        Execute the graph, yielding intermediate and final states.
+        Execute the graph, yielding interrupts and the final state.
 
         Args:
             input_state (Dict[str, Any]): The initial state.
             config (Dict[str, Any]): Configuration for the execution.
 
         Yields:
-            Dict[str, Any]: Intermediate states, interrupts, and the final state during execution.
-
-        Raises:
-            RuntimeError: If no valid next node is found during execution or if an exception occurs in a node function when raise_exceptions is True.
+            Dict[str, Any]: Interrupts and the final state during execution.
         """
-        current_state = {"values": input_state, "next": START}
+        current_node = START
+        state = input_state.copy()
+        config = config.copy()
 
-        while current_state["next"] != END:
-            current_node = current_state["next"]
-            node_data = self.node(current_node)
-
+        while current_node != END:
+            # Check for interrupt before
             if current_node in self.interrupt_before:
-                yield {"type": "interrupt", "node": current_node, "state": current_state["values"]}
+                yield {"type": "interrupt", "node": current_node, "state": state.copy()}
 
-            if node_data.get("run"):
-                result = self._execute_node_function(node_data["run"], current_state["values"], config, current_node)
-                if "error" in result:
-                    yield {"type": "error", "node": current_node, "error": result["error"], "state": current_state["values"]}
-                    return
-                current_state["values"].update(result)
+            # Get node data
+            node_data = self.node(current_node)
+            run_func = node_data.get("run")
 
+            # Execute node's run function if present
+            if run_func:
+                try:
+                    result = self._execute_node_function(run_func, state, config, current_node)
+                    state.update(result)
+                except Exception as e:
+                    if self.raise_exceptions:
+                        raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                    else:
+                        yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                        return
+
+            # Check for interrupt after
             if current_node in self.interrupt_after:
-                yield {"type": "interrupt", "node": current_node, "state": current_state["values"]}
+                yield {"type": "interrupt", "node": current_node, "state": state.copy()}
 
-            current_state["next"] = self._get_next_node(current_node, current_state["values"], config)
+            # Determine next node
+            next_node = self._get_next_node(current_node, state, config)
+            if not next_node:
+                error_msg = f"No valid next node found from node '{current_node}'"
+                if self.raise_exceptions:
+                    raise RuntimeError(error_msg)
+                else:
+                    yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                    return
 
-        yield {"type": "final", "state": current_state["values"]}
+            current_node = next_node
+
+        # Once END is reached, yield final state
+        yield {"type": "final", "state": state.copy()}
 
     def _execute_node_function(self, func: Callable[..., Any], state: Dict[str, Any], config: Dict[str, Any], node: str) -> Dict[str, Any]:
         """
@@ -269,25 +324,20 @@ class StateGraph:
             node (str): The current node name.
 
         Returns:
-            Dict[str, Any]: The result of the function execution or an error state.
+            Dict[str, Any]: The result of the function execution.
 
         Raises:
-            RuntimeError: If raise_exceptions is True and an exception occurs during function execution.
+            Exception: If an exception occurs during function execution.
         """
         available_params = {"state": state, "config": config, "node": node, "graph": self}
         function_params = self._prepare_function_params(func, available_params)
-        
-        try:
-            result = func(**function_params)
-        except Exception as e:
-            if self.raise_exceptions:
-                raise RuntimeError(f"Error in node {node}: {str(e)}") from e
-            return {"error": str(e), "node": node}
-
+        result = func(**function_params)
         if isinstance(result, dict):
             return result
         else:
+            # If result is not a dict, wrap it in a dict
             return {"result": result}
+
 
     def _prepare_function_params(self, func: Callable[..., Any], available_params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -322,7 +372,7 @@ class StateGraph:
 
         return function_params
 
-    def _get_next_node(self, current_node: str, state: Dict[str, Any], config: Dict[str, Any]) -> str:
+    def _get_next_node(self, current_node: str, state: Dict[str, Any], config: Dict[str, Any]) -> Optional[str]:
         """
         Determine the next node based on the current node's successors and conditions.
 
@@ -332,27 +382,30 @@ class StateGraph:
             config (Dict[str, Any]): The configuration.
 
         Returns:
-            str: The name of the next node.
-
-        Raises:
-            RuntimeError: If no valid next node is found.
+            Optional[str]: The name of the next node, or None if no valid next node is found.
         """
-        for successor in self.successors(current_node):
+        successors = self.successors(current_node)
+
+        for successor in successors:
             edge_data = self.edge(current_node, successor)
-            if "cond" in edge_data:
-                cond_func = edge_data["cond"]
-                available_params = {"state": state, "config": config}
-                cond_params = self._prepare_function_params(cond_func, available_params)
-                condition_result = cond_func(**cond_params)
+            cond_func = edge_data.get("cond", lambda **kwargs: True)
+            cond_map = edge_data.get("cond_map", None)
+            available_params = {"state": state, "config": config, "node": current_node, "graph": self}
+            cond_params = self._prepare_function_params(cond_func, available_params)
+            cond_result = cond_func(**cond_params)
 
-                if "cond_map" in edge_data:
-                    if condition_result in edge_data["cond_map"]:
-                        return edge_data["cond_map"][condition_result]
-                else:
-                    if condition_result:
-                        return successor
+            if cond_map:
+                # cond_map is a mapping from condition results to nodes
+                next_node = cond_map.get(cond_result, None)
+                if next_node:
+                    return next_node
+            else:
+                # cond_result is treated as boolean
+                if cond_result:
+                    return successor
 
-        raise RuntimeError(f"No valid next node found for '{current_node}'")
+        # No valid next node found
+        return None
 
     def render_graphviz(self):
         """
