@@ -10,6 +10,7 @@ Hollowgraph is a lightweight, single-app state graph library inspired by LangGra
 - Streamlined workflow creation
 - Ease integration with any language models (like GPT)
 - LLM library agnostic
+- Parallel fan out fan in support
 - Visualization of state graphs
 
 ## Installation
@@ -99,7 +100,7 @@ Final result:
 {'type': 'final', 'state': {'value': 17, 'result': 'Final value: 17'}}
 ```
 
-A full example with LLM capabilities can be found in the examples directory.
+A full example with LLM capabilities and fan out fan in examples can be found in the examples directory.
 
 # Contributing
 We welcome contributions! Please see our contributing guidelines for more details.

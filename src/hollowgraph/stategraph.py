@@ -2,6 +2,10 @@ import inspect
 from typing import Any, Callable, Dict, List, Optional, Union, Generator
 import networkx as nx
 from networkx.drawing.nx_agraph import to_agraph
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import copy
+
 
 
 # Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
@@ -49,6 +53,7 @@ class StateGraph:
         self.interrupt_before: List[str] = []
         self.interrupt_after: List[str] = []
         self.raise_exceptions = raise_exceptions
+        self.parallel_sync = {}
 
     def add_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
         """
@@ -98,6 +103,283 @@ class StateGraph:
             if out_node not in self.graph.nodes:
                 raise ValueError(f"Target node '{out_node}' does not exist in the graph.")
             self.graph.add_edge(in_node, out_node, cond=func, cond_map=cond)
+
+    def add_parallel_edge(self, in_node: str, out_node: str, fan_in_node: str) -> None:
+        """
+        Add an unconditional parallel edge between two nodes.
+
+        Args:
+            in_node (str): The source node.
+            out_node (str): The target node.
+            fan_in_node (str): The fan-in node that this parallel flow will reach.
+
+        Raises:
+            ValueError: If either node doesn't exist in the graph.
+        """
+        if in_node not in self.graph.nodes or out_node not in self.graph.nodes or fan_in_node not in self.graph.nodes:
+            raise ValueError("All nodes must exist in the graph.")
+        self.graph.add_edge(in_node, out_node, cond=lambda **kwargs: True, cond_map={True: out_node}, parallel=True, fan_in_node=fan_in_node)
+
+    def add_fanin_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
+        """
+        Add a fan-in node to the graph.
+
+        Args:
+            node (str): The name of the node.
+            run (Optional[Callable[..., Any]]): The function to run when this node is active.
+
+        Raises:
+            ValueError: If the node already exists in the graph.
+        """
+        if node in self.graph.nodes:
+            raise ValueError(f"Node '{node}' already exists in the graph.")
+        self.graph.add_node(node, run=run, fan_in=True)
+
+    def invoke(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, None]:
+        """
+        Execute the graph, yielding interrupts and the final state.
+
+        Args:
+            input_state (Dict[str, Any]): The initial state.
+            config (Dict[str, Any]): Configuration for the execution.
+
+        Yields:
+            Dict[str, Any]: Interrupts and the final state during execution.
+        """
+
+        current_node = START
+        state = input_state.copy()
+        config = config.copy()
+        # Create a ThreadPoolExecutor for parallel flows
+        executor = ThreadPoolExecutor()
+        # Mapping from fan-in nodes to list of futures
+        fanin_futures: Dict[str, List[Future]] = {}
+        # Lock for thread-safe operations on fanin_futures
+        fanin_lock = threading.Lock()
+
+        try:
+            while current_node != END:
+                # Check for interrupt before
+                if current_node in self.interrupt_before:
+                    yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+
+                # Get node data
+                node_data = self.node(current_node)
+                run_func = node_data.get("run")
+
+                # Execute node's run function if present
+                if run_func:
+                    try:
+                        result = self._execute_node_function(run_func, state, config, current_node)
+                        state.update(result)
+                    except Exception as e:
+                        if self.raise_exceptions:
+                            raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                        else:
+                            yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                            return
+
+                # Check for interrupt after
+                if current_node in self.interrupt_after:
+                    yield {"type": "interrupt", "node": current_node, "state": state.copy()}
+
+                # Determine next node
+                successors = self.successors(current_node)
+
+                # Separate parallel and normal edges
+                parallel_edges = []
+                normal_successors = []
+
+                for successor in successors:
+                    edge_data = self.edge(current_node, successor)
+                    if edge_data.get('parallel', False):
+                        fan_in_node = edge_data.get('fan_in_node', None)
+                        if fan_in_node is None:
+                            error_msg = f"Parallel edge from '{current_node}' to '{successor}' must have 'fan_in_node' specified"
+                            if self.raise_exceptions:
+                                raise RuntimeError(error_msg)
+                            else:
+                                yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                                return
+                        parallel_edges.append((successor, fan_in_node))
+                    else:
+                        normal_successors.append(successor)
+
+                # Start parallel flows
+                for successor, fan_in_node in parallel_edges:
+                    # Start a new thread for the flow starting from successor
+                    future = executor.submit(self._execute_flow, successor, copy.deepcopy(state), config.copy(), fan_in_node)
+                    # Register the future with the corresponding fan-in node
+                    with fanin_lock:
+                        if fan_in_node not in fanin_futures:
+                            fanin_futures[fan_in_node] = []
+                        fanin_futures[fan_in_node].append(future)
+
+                # Handle normal successors
+                if normal_successors:
+                    # For simplicity, take the first valid normal successor
+                    next_node = None
+                    for successor in normal_successors:
+                        edge_data = self.edge(current_node, successor)
+                        cond_func = edge_data.get("cond", lambda **kwargs: True)
+                        cond_map = edge_data.get("cond_map", None)
+                        available_params = {"state": state, "config": config, "node": current_node, "graph": self}
+                        cond_params = self._prepare_function_params(cond_func, available_params)
+                        cond_result = cond_func(**cond_params)
+
+                        if cond_map:
+                            next_node_candidate = cond_map.get(cond_result, None)
+                            if next_node_candidate:
+                                next_node = next_node_candidate
+                                break
+                        else:
+                            if cond_result:
+                                next_node = successor
+                                break
+                    if next_node:
+                        current_node = next_node
+                    else:
+                        error_msg = f"No valid next node found from node '{current_node}'"
+                        if self.raise_exceptions:
+                            raise RuntimeError(error_msg)
+                        else:
+                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            return
+                else:
+                    # No normal successors
+                    # Check if there is a fan-in node with pending futures
+                    if fanin_futures:
+                        # Proceed to the fan-in node
+                        current_node = list(fanin_futures.keys())[0]
+                        # Wait for all futures corresponding to this fan-in node
+                        futures = fanin_futures.get(current_node, [])
+                        results = [future.result() for future in futures]
+                        # Collect the results in the state
+                        state['parallel_results'] = results
+
+                        # Execute the fan-in node's run function
+                        node_data = self.node(current_node)
+                        run_func = node_data.get("run")
+                        if run_func:
+                            try:
+                                result = self._execute_node_function(run_func, state, config, current_node)
+                                state.update(result)
+                            except Exception as e:
+                                if self.raise_exceptions:
+                                    raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                                else:
+                                    yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
+                                    return
+
+                        # Continue to next node
+                        next_node = self._get_next_node(current_node, state, config)
+                        if not next_node:
+                            error_msg = f"No valid next node found from node '{current_node}'"
+                            if self.raise_exceptions:
+                                raise RuntimeError(error_msg)
+                            else:
+                                yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                                return
+                        current_node = next_node
+                    else:
+                        error_msg = f"No valid next node found from node '{current_node}'"
+                        if self.raise_exceptions:
+                            raise RuntimeError(error_msg)
+                        else:
+                            yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
+                            return
+        finally:
+            executor.shutdown(wait=True)
+        # Once END is reached, yield final state
+        yield {"type": "final", "state": state.copy()}
+
+
+    def _execute_flow(self, current_node, state, config, fan_in_node):
+        """
+        Execute a flow starting from current_node until it reaches fan_in_node.
+
+        Args:
+            current_node (str): The starting node of the flow.
+            state (Dict[str, Any]): The state of the flow.
+            config (Dict[str, Any]): Configuration for the execution.
+            fan_in_node (str): The fan-in node where this flow should stop.
+
+        Returns:
+            Dict[str, Any]: The final state of the flow when it reaches the fan-in node.
+        """
+        while current_node != END:
+            # Check if current node is the fan-in node
+            if current_node == fan_in_node:
+                # Return the state to be collected at fan-in node
+                return state
+
+            # Get node data
+            node_data = self.node(current_node)
+            run_func = node_data.get("run")
+
+            # Execute node's run function if present
+            if run_func:
+                try:
+                    result = self._execute_node_function(run_func, state, config, current_node)
+                    state.update(result)
+                except Exception as e:
+                    if self.raise_exceptions:
+                        raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
+                    else:
+                        # Return error in state
+                        state['error'] = str(e)
+                        return state
+
+            # Determine next node using _get_next_node
+            try:
+                next_node = self._get_next_node(current_node, state, config)
+            except Exception as e:
+                if self.raise_exceptions:
+                    raise
+                else:
+                    state['error'] = str(e)
+                    return state
+
+            if next_node:
+                current_node = next_node
+            else:
+                error_msg = f"No valid next node found from node '{current_node}' in parallel flow"
+                if self.raise_exceptions:
+                    raise RuntimeError(error_msg)
+                else:
+                    state['error'] = error_msg
+                    return state
+
+        # Reached END
+        return state
+
+    def _execute_node_function(self, func: Callable[..., Any], state: Dict[str, Any], config: Dict[str, Any], node: str) -> Dict[str, Any]:
+        """
+        Execute the function associated with a node.
+
+        Args:
+            func (Callable[..., Any]): The function to execute.
+            state (Dict[str, Any]): The current state.
+            config (Dict[str, Any]): The configuration.
+            node (str): The current node name.
+
+        Returns:
+            Dict[str, Any]: The result of the function execution.
+
+        Raises:
+            Exception: If an exception occurs during function execution.
+        """
+        available_params = {"state": state, "config": config, "node": node, "graph": self}
+        if 'parallel_results' in state:
+            available_params['parallel_results'] = state['parallel_results']
+        function_params = self._prepare_function_params(func, available_params)
+        result = func(**function_params)
+        if isinstance(result, dict):
+            return result
+        else:
+            # If result is not a dict, wrap it in a dict
+            return {"result": result}
+
 
     def set_entry_point(self, init_state: str) -> None:
         """
@@ -242,61 +524,6 @@ class StateGraph:
             # Check for interrupt after
             if current_node in self.interrupt_after:
                 yield {"type": "interrupt_after", "node": current_node, "state": state.copy()}
-
-            # Determine next node
-            next_node = self._get_next_node(current_node, state, config)
-            if not next_node:
-                error_msg = f"No valid next node found from node '{current_node}'"
-                if self.raise_exceptions:
-                    raise RuntimeError(error_msg)
-                else:
-                    yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
-                    return
-
-            current_node = next_node
-
-        # Once END is reached, yield final state
-        yield {"type": "final", "state": state.copy()}
-
-    def invoke(self, input_state: Dict[str, Any] = {}, config: Dict[str, Any] = {}) -> Generator[Dict[str, Any], None, None]:
-        """
-        Execute the graph, yielding interrupts and the final state.
-
-        Args:
-            input_state (Dict[str, Any]): The initial state.
-            config (Dict[str, Any]): Configuration for the execution.
-
-        Yields:
-            Dict[str, Any]: Interrupts and the final state during execution.
-        """
-        current_node = START
-        state = input_state.copy()
-        config = config.copy()
-
-        while current_node != END:
-            # Check for interrupt before
-            if current_node in self.interrupt_before:
-                yield {"type": "interrupt", "node": current_node, "state": state.copy()}
-
-            # Get node data
-            node_data = self.node(current_node)
-            run_func = node_data.get("run")
-
-            # Execute node's run function if present
-            if run_func:
-                try:
-                    result = self._execute_node_function(run_func, state, config, current_node)
-                    state.update(result)
-                except Exception as e:
-                    if self.raise_exceptions:
-                        raise RuntimeError(f"Error in node '{current_node}': {str(e)}") from e
-                    else:
-                        yield {"type": "error", "node": current_node, "error": str(e), "state": state.copy()}
-                        return
-
-            # Check for interrupt after
-            if current_node in self.interrupt_after:
-                yield {"type": "interrupt", "node": current_node, "state": state.copy()}
 
             # Determine next node
             next_node = self._get_next_node(current_node, state, config)
