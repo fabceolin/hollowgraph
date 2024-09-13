@@ -3,6 +3,9 @@ from typing import Any, Callable, Dict, List, Optional, Union, Generator
 import networkx as nx
 from networkx.drawing.nx_agraph import to_agraph
 from concurrent.futures import ThreadPoolExecutor
+import threading
+import copy
+
 
 
 # Copyright (c) 2024 Claudionor Coelho Jr, Fabrício Ceolin
@@ -147,12 +150,14 @@ class StateGraph:
         current_node = START
         state = input_state.copy()
         config = config.copy()
+        # Create a ThreadPoolExecutor for parallel flows
+        executor = ThreadPoolExecutor()
+        # Mapping from fan-in nodes to list of futures
+        fanin_futures: Dict[str, List[Future]] = {}
+        # Lock for thread-safe operations on fanin_futures
+        fanin_lock = threading.Lock()
 
-        # Create a ThreadPoolExecutor
-        with ThreadPoolExecutor() as executor:
-            # Mapping from fan-in nodes to futures
-            fanin_futures = {}
-
+        try:
             while current_node != END:
                 # Check for interrupt before
                 if current_node in self.interrupt_before:
@@ -203,13 +208,12 @@ class StateGraph:
                 # Start parallel flows
                 for successor, fan_in_node in parallel_edges:
                     # Start a new thread for the flow starting from successor
-                    future = executor.submit(self._execute_flow, successor, state.copy(), config.copy(), fan_in_node)
-
-                    # Add future to fan-in node's list
-                    if fan_in_node not in fanin_futures:
-                        fanin_futures[fan_in_node] = []
-                    fanin_futures[fan_in_node].append(future)
-
+                    future = executor.submit(self._execute_flow, successor, copy.deepcopy(state), config.copy(), fan_in_node)
+                    # Register the future with the corresponding fan-in node
+                    with fanin_lock:
+                        if fan_in_node not in fanin_futures:
+                            fanin_futures[fan_in_node] = []
+                        fanin_futures[fan_in_node].append(future)
                 # Handle normal successors
                 if normal_successors:
                     # For simplicity, take the first valid normal successor
@@ -282,6 +286,8 @@ class StateGraph:
                         else:
                             yield {"type": "error", "node": current_node, "error": error_msg, "state": state.copy()}
                             return
+        finally:
+            executor.shutdown(wait=True)
 
         # Once END is reached, yield final state
         yield {"type": "final", "state": state.copy()}
@@ -300,6 +306,11 @@ class StateGraph:
             Dict[str, Any]: The final state of the flow when it reaches the fan-in node.
         """
         while current_node != END:
+            # Check if current node is the fan-in node
+            if current_node == fan_in_node:
+                # Return the state to be collected at fan-in node
+                return state
+
             # Get node data
             node_data = self.node(current_node)
             run_func = node_data.get("run")
@@ -317,37 +328,15 @@ class StateGraph:
                         state['error'] = str(e)
                         return state
 
-            # Check if current node is the fan-in node
-            if current_node == fan_in_node:
-                # Return the state to be collected at fan-in node
-                return state
-
-            # Determine next node
-            successors = self.successors(current_node)
-            next_node = None
-
-            # Handle parallel edges within the flow
-            for successor in successors:
-                edge_data = self.edge(current_node, successor)
-                if edge_data.get('parallel', False):
-                    # For simplicity, we can ignore nested parallelism in this example
-                    raise NotImplementedError("Nested parallelism is not supported in this simplified implementation.")
+            # Determine next node using _get_next_node
+            try:
+                next_node = self._get_next_node(current_node, state, config)
+            except Exception as e:
+                if self.raise_exceptions:
+                    raise
                 else:
-                    cond_func = edge_data.get("cond", lambda **kwargs: True)
-                    cond_map = edge_data.get("cond_map", None)
-                    available_params = {"state": state, "config": config, "node": current_node, "graph": self}
-                    cond_params = self._prepare_function_params(cond_func, available_params)
-                    cond_result = cond_func(**cond_params)
-
-                    if cond_map:
-                        next_node_candidate = cond_map.get(cond_result, None)
-                        if next_node_candidate:
-                            next_node = next_node_candidate
-                            break
-                    else:
-                        if cond_result:
-                            next_node = successor
-                            break
+                    state['error'] = str(e)
+                    return state
 
             if next_node:
                 current_node = next_node
