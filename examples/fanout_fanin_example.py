@@ -1,5 +1,3 @@
-import networkx as nx
-
 # Assuming StateGraph is imported from the appropriate module
 from hollowgraph import StateGraph
 
