@@ -805,6 +805,62 @@ class TestStateGraph(unittest.TestCase):
         self.assertEqual(result[-1]["state"]["final_result"], 18)  # 5+0 + 5+1 + 5+2 = 18
 
     def test_graph_structure_with_interruptions(self):
+        """
+        This test verifies that the StateGraph framework correctly handles a workflow that includes 
+        conditional edges, interrupts, and multiple states. The graph represents a complex flow 
+        of execution with interruptions, and the test ensures that interrupts are correctly triggered 
+        and handled.
+    
+        Test setup:
+        1. Helper Functions:
+           - render_and_save_graph: Saves the current state of the graph visualization to a file.
+           - create_node_function: Dynamically generates functions for nodes that return a new state 
+             indicating which node was executed.
+        
+        2. Create multiple nodes (A, B, C, ..., L) using the create_node_function helper. Each node
+           will simply return the state with the name of the node as "state" and a message saying 
+           "Executed {name}".
+        
+        3. Conditional Edge Functions:
+           - is_b_complete: Checks if "messages" is present in the state. If not, the flow moves 
+             "ahead"; otherwise, it moves "behind."
+           - is_e_complete: Checks the value of the "instruction" in the config to decide whether 
+             to proceed to "E" or "F."
+           - is_g_complete: Simulates revisions by incrementing the "revision_number" and deciding 
+             whether to continue looping or move forward based on the "max_revisions" limit.
+    
+        4. Graph Structure:
+           - The graph consists of nodes from "A" to "L," with various conditional edges based on 
+             the node state or config.
+           - The graph uses several conditional transitions:
+             * From "B" to "C" or back to "A" depending on the result of is_b_complete.
+             * From "E" to "F" or staying at "E" based on is_e_complete.
+             * From "G" to either continue looping or proceed forward depending on is_g_complete.
+           - Final state is reached at "L".
+    
+        5. Interruptions:
+           - The graph is compiled with interruption points at specific nodes: "B", "E", "G", and "K."
+           - The test ensures that interruptions occur at the right nodes and execution can be resumed 
+             after handling them.
+    
+        Test execution:
+        - The initial state is {"state": "A", "values": {"test": "initial"}, "revision_number": 0, "max_revisions": 3}.
+        - The config is {"configurable": {"instruction": ""}}.
+        - The graph is streamed, capturing each event (state, interrupt, final state) in the process.
+        - The test collects all events and checks:
+           * That interruptions occurred at nodes "B", "E", and "G".
+           * That the correct number of iterations occurred without infinite loops.
+           * That the final state was reached and matches expectations.
+    
+        Assertions:
+        - Verifies that interrupts occur at nodes "B", "E", and "G".
+        - Ensures that the final event contains a "result" key with the value "Executed L".
+        - Confirms that the "revision_number" in the final state is correctly incremented to 4.
+    
+        This test demonstrates the ability of the StateGraph framework to handle complex workflows 
+        involving conditional transitions, interruptions, and resumption of execution.
+        """
+
         def render_and_save_graph(graph, filename="state_graph.png"):
             try:
                 graph.save_graph_image(filename)
