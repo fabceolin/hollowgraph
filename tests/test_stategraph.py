@@ -12,6 +12,7 @@ class TestStateGraph(unittest.TestCase):
     def setUp(self):
         self.graph = StateGraph({"test": "schema"})
 
+
     def test_init(self):
         """
         Verify that the StateGraph is initialized correctly with the given state schema.
@@ -446,6 +447,7 @@ class TestStateGraph(unittest.TestCase):
         Verify that the graph correctly handles the case where no valid next node is found during execution.
         """
         mock_get_next_node.side_effect = RuntimeError("No valid next node")
+
 
         self.graph.add_node("start")
         self.graph.set_entry_point("start")
