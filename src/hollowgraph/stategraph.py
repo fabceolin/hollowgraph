@@ -108,12 +108,12 @@ class StateGraph:
     def add_parallel_edge(self, in_node: str, out_node: str, fan_in_node: str) -> None:
         """
         Add an unconditional parallel edge between two nodes.
-        
+
         Args:
             in_node (str): The source node.
             out_node (str): The target node.
             fan_in_node (str): The fan-in node that this parallel flow will reach.
-        
+
         Raises:
             ValueError: If either node doesn't exist in the graph.
         """
@@ -124,11 +124,11 @@ class StateGraph:
     def add_fanin_node(self, node: str, run: Optional[Callable[..., Any]] = None) -> None:
         """
         Add a fan-in node to the graph.
-        
+
         Args:
             node (str): The name of the node.
             run (Optional[Callable[..., Any]]): The function to run when this node is active.
-        
+
         Raises:
             ValueError: If the node already exists in the graph.
         """
@@ -147,6 +147,7 @@ class StateGraph:
         Yields:
             Dict[str, Any]: Interrupts and the final state during execution.
         """
+
         current_node = START
         state = input_state.copy()
         config = config.copy()
@@ -214,6 +215,7 @@ class StateGraph:
                         if fan_in_node not in fanin_futures:
                             fanin_futures[fan_in_node] = []
                         fanin_futures[fan_in_node].append(future)
+
                 # Handle normal successors
                 if normal_successors:
                     # For simplicity, take the first valid normal successor
@@ -246,9 +248,10 @@ class StateGraph:
                             return
                 else:
                     # No normal successors
-                    # Check if current node is a fan-in node
-                    node_data = self.node(current_node)
-                    if node_data.get('fan_in', False):
+                    # Check if there is a fan-in node with pending futures
+                    if fanin_futures:
+                        # Proceed to the fan-in node
+                        current_node = list(fanin_futures.keys())[0]
                         # Wait for all futures corresponding to this fan-in node
                         futures = fanin_futures.get(current_node, [])
                         results = [future.result() for future in futures]
@@ -256,6 +259,7 @@ class StateGraph:
                         state['parallel_results'] = results
 
                         # Execute the fan-in node's run function
+                        node_data = self.node(current_node)
                         run_func = node_data.get("run")
                         if run_func:
                             try:
@@ -279,7 +283,6 @@ class StateGraph:
                                 return
                         current_node = next_node
                     else:
-                        # No normal successors, not a fan-in node
                         error_msg = f"No valid next node found from node '{current_node}'"
                         if self.raise_exceptions:
                             raise RuntimeError(error_msg)
@@ -288,9 +291,9 @@ class StateGraph:
                             return
         finally:
             executor.shutdown(wait=True)
-
         # Once END is reached, yield final state
         yield {"type": "final", "state": state.copy()}
+
 
     def _execute_flow(self, current_node, state, config, fan_in_node):
         """

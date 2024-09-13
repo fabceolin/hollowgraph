@@ -793,43 +793,43 @@ class TestStateGraph(unittest.TestCase):
 
     def test_graph_structure_with_interruptions(self):
         """
-        This test verifies that the StateGraph framework correctly handles a workflow that includes 
-        conditional edges, interrupts, and multiple states. The graph represents a complex flow 
-        of execution with interruptions, and the test ensures that interrupts are correctly triggered 
+        This test verifies that the StateGraph framework correctly handles a workflow that includes
+        conditional edges, interrupts, and multiple states. The graph represents a complex flow
+        of execution with interruptions, and the test ensures that interrupts are correctly triggered
         and handled.
-    
+
         Test setup:
         1. Helper Functions:
            - render_and_save_graph: Saves the current state of the graph visualization to a file.
-           - create_node_function: Dynamically generates functions for nodes that return a new state 
+           - create_node_function: Dynamically generates functions for nodes that return a new state
              indicating which node was executed.
-        
+
         2. Create multiple nodes (A, B, C, ..., L) using the create_node_function helper. Each node
-           will simply return the state with the name of the node as "state" and a message saying 
+           will simply return the state with the name of the node as "state" and a message saying
            "Executed {name}".
-        
+
         3. Conditional Edge Functions:
-           - is_b_complete: Checks if "messages" is present in the state. If not, the flow moves 
+           - is_b_complete: Checks if "messages" is present in the state. If not, the flow moves
              "ahead"; otherwise, it moves "behind."
-           - is_e_complete: Checks the value of the "instruction" in the config to decide whether 
+           - is_e_complete: Checks the value of the "instruction" in the config to decide whether
              to proceed to "E" or "F."
-           - is_g_complete: Simulates revisions by incrementing the "revision_number" and deciding 
+           - is_g_complete: Simulates revisions by incrementing the "revision_number" and deciding
              whether to continue looping or move forward based on the "max_revisions" limit.
-    
+
         4. Graph Structure:
-           - The graph consists of nodes from "A" to "L," with various conditional edges based on 
+           - The graph consists of nodes from "A" to "L," with various conditional edges based on
              the node state or config.
            - The graph uses several conditional transitions:
              * From "B" to "C" or back to "A" depending on the result of is_b_complete.
              * From "E" to "F" or staying at "E" based on is_e_complete.
              * From "G" to either continue looping or proceed forward depending on is_g_complete.
            - Final state is reached at "L".
-    
+
         5. Interruptions:
            - The graph is compiled with interruption points at specific nodes: "B", "E", "G", and "K."
-           - The test ensures that interruptions occur at the right nodes and execution can be resumed 
+           - The test ensures that interruptions occur at the right nodes and execution can be resumed
              after handling them.
-    
+
         Test execution:
         - The initial state is {"state": "A", "values": {"test": "initial"}, "revision_number": 0, "max_revisions": 3}.
         - The config is {"configurable": {"instruction": ""}}.
@@ -838,13 +838,13 @@ class TestStateGraph(unittest.TestCase):
            * That interruptions occurred at nodes "B", "E", and "G".
            * That the correct number of iterations occurred without infinite loops.
            * That the final state was reached and matches expectations.
-    
+
         Assertions:
         - Verifies that interrupts occur at nodes "B", "E", and "G".
         - Ensures that the final event contains a "result" key with the value "Executed L".
         - Confirms that the "revision_number" in the final state is correctly incremented to 4.
-    
-        This test demonstrates the ability of the StateGraph framework to handle complex workflows 
+
+        This test demonstrates the ability of the StateGraph framework to handle complex workflows
         involving conditional transitions, interruptions, and resumption of execution.
         """
 
@@ -999,12 +999,10 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
             # Collect results from all parallel flows
             parallel_results = state.get('parallel_results', [])
             print(f"fan_in_run: parallel_results = {parallel_results}")
-            total_increment = 0
-            for result in parallel_results:
-                if 'flow1_value' in result:
-                    total_increment += result['flow1_value'] - state.get('value', 0)
-                if 'flow2_value' in result:
-                    total_increment += result['flow2_value'] - state.get('value', 0)
+            total_increment = sum(
+                result.get('flow1_value', 0) + result.get('flow2_value', 0) - state.get('value', 0)
+                for result in parallel_results
+            )
             total = state.get('value', 0) + total_increment
             print(f"fan_in_run: total = {total}")
             return {'result': total}
@@ -1020,22 +1018,20 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
         self.graph.add_node("flow2_start", run=flow2_start_run)
         self.graph.add_fanin_node("fan_in", run=fan_in_run)
         self.graph.add_node("end", run=end_run)
-    
+
         # Set entry and finish points
         self.graph.set_entry_point("start")
         self.graph.set_finish_point("end")
-    
+
         # Add edges
         # From start to flow1 and flow2 (parallel edges)
         self.graph.add_parallel_edge("start", "flow1_start", "fan_in")
         self.graph.add_parallel_edge("start", "flow2_start", "fan_in")
-        # Add a normal edge from 'start' to 'fan_in'
-        self.graph.add_edge("start", "fan_in")
-    
+
         # **Add edges from flow1_start and flow2_start to fan_in**
         self.graph.add_edge("flow1_start", "fan_in")
         self.graph.add_edge("flow2_start", "fan_in")
-    
+
         # From fan_in to end
         self.graph.add_edge("fan_in", "end")
         # Add nodes
@@ -1058,6 +1054,7 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
         self.assertIn('final_result', final_output['state'], "Final result not found in state.")
         self.assertEqual(final_output['state']['final_result'], expected_result,
                          f"Expected final_result to be {expected_result}, got {final_output['state']['final_result']}.")
+
 
     def test_fan_out_and_fan_in_with_multiple_parallel_flows(self):
         """
@@ -1102,9 +1099,16 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
         def fan_in_run(state, config, node, graph):
             # Collect results from all parallel flows
             parallel_results = state.get('parallel_results', [])
-            total = sum(result.get('flow1_value', 0) for result in parallel_results) + \
-                    sum(result.get('flow2_value', 0) for result in parallel_results) + \
-                    sum(result.get('flow3_value', 0) for result in parallel_results)
+            total = 0
+            initial_value = state.get('value', 0)
+            for result in parallel_results:
+                if 'flow1_value' in result:
+                    total += result['flow1_value'] - initial_value
+                if 'flow2_value' in result:
+                    total += result['flow2_value'] - initial_value
+                if 'flow3_value' in result:
+                    total += result['flow3_value'] - initial_value
+            total += initial_value
             return {'result': total}
 
         def end_run(state, config, node, graph):
@@ -1129,8 +1133,11 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
         self.graph.add_parallel_edge("start", "flow1_start", "fan_in")
         self.graph.add_parallel_edge("start", "flow2_start", "fan_in")
         self.graph.add_parallel_edge("start", "flow3_start", "fan_in")
-        # **Add a normal edge from 'start' to 'fan_in'**
-        self.graph.add_edge("start", "fan_in")
+
+        # **Add edges from flow1_start, flow2_start, and flow3_start to fan_in**
+        self.graph.add_edge("flow1_start", "fan_in")
+        self.graph.add_edge("flow2_start", "fan_in")
+        self.graph.add_edge("flow3_start", "fan_in")
 
         # From fan_in to end
         self.graph.add_edge("fan_in", "end")
@@ -1153,14 +1160,15 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
         self.assertIn('final_result', final_output['state'], "Final result not found in state.")
         self.assertEqual(final_output['state']['final_result'], expected_result,
                          f"Expected final_result to be {expected_result}, got {final_output['state']['final_result']}.")
+
     def test_fan_in_with_no_parallel_flows(self):
         """
         Test the behavior when a fan-in node is present but no parallel flows reach it.
         The graph should handle this gracefully.
-        
+
         Workflow:
             START -> start -> fan_in -> end -> END
-        
+
         fan_in:
             - Should handle empty 'parallel_results'
         """
@@ -1279,8 +1287,10 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
         # From start to flow1 and flow2 (parallel edges)
         self.graph.add_parallel_edge("start", "flow1_start", "fan_in")
         self.graph.add_parallel_edge("start", "flow2_start", "fan_in")
-        # **Add a normal edge from 'start' to 'fan_in'**
-        self.graph.add_edge("start", "fan_in")
+
+        # Add edges from flow1_start and flow2_start to fan_in
+        self.graph.add_edge("flow1_start", "fan_in")
+        self.graph.add_edge("flow2_start", "fan_in")
 
         # From fan_in to end
         self.graph.add_edge("fan_in", "end")
@@ -1295,10 +1305,9 @@ class TestStateGraphFanOutFanIn(unittest.TestCase):
                 pass  # Iterate through the generator
 
         # Verify the exception message
-        self.assertEqual(str(context.exception), "No valid next node found from node 'start'")
+        self.assertIn("Error in node 'flow1_start': Intentional error in flow1", str(context.exception))
 
-        # Alternatively, if you want to capture partial outputs before the exception:
-        # Not applicable here since the exception occurs during the processing of 'flow1_start'
+
 
 if __name__ == '__main__':
     unittest.main()
